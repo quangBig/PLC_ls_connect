@@ -31,3 +31,7 @@ Images/
 
 ## Temp
 *.tmp
+
+## Installers
+Microsoft .NET SDK*
+*.exe.cache

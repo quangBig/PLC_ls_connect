@@ -127,6 +127,32 @@
             <Setter Property="Height" Value="14" />
             <Setter Property="Margin" Value="0,0,8,0" />
         </Style>
+
+        <!-- ComboBox Dark Style -->
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="#1E1E2E" />
+            <Setter Property="Foreground" Value="#CDD6F4" />
+            <Setter Property="BorderBrush" Value="#45475A" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="6,3" />
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="#1E1E2E" />
+            <Setter Property="Foreground" Value="#CDD6F4" />
+            <Setter Property="Padding" Value="6,4" />
+            <Style.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="#313244" />
+                    <Setter Property="Foreground" Value="#89B4FA" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#45475A" />
+                    <Setter Property="Foreground" Value="White" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -202,6 +228,7 @@
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />  <!-- Header & Action Buttons -->
                                     <RowDefinition Height="Auto" />  <!-- Network Settings & Ping Bar -->
+                                    <RowDefinition Height="Auto" />  <!-- Continuous Light Control -->
                                     <RowDefinition Height="Auto" />  <!-- 8 Channels UniformGrid -->
                                 </Grid.RowDefinitions>
 
@@ -278,8 +305,75 @@
                                     </Grid>
                                 </Border>
 
+                                <!-- Continuous Light Control (Điều Khiển Đèn Liên Tục: CH1..CH4 hoặc tùy chỉnh) -->
+                                <Border Grid.Row="2" Background="#11111B" CornerRadius="6" Padding="10,8" Margin="0,0,0,8"
+                                        BorderBrush="#313244" BorderThickness="1">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />  <!-- Label + Tag -->
+                                            <ColumnDefinition Width="Auto" />  <!-- Start Label -->
+                                            <ColumnDefinition Width="70" />    <!-- ComboBox Start -->
+                                            <ColumnDefinition Width="Auto" />  <!-- End Label -->
+                                            <ColumnDefinition Width="70" />    <!-- ComboBox End -->
+                                            <ColumnDefinition Width="Auto" />  <!-- Interval Label -->
+                                            <ColumnDefinition Width="65" />    <!-- Interval TextBox -->
+                                            <ColumnDefinition Width="Auto" />  <!-- ms -->
+                                            <ColumnDefinition Width="Auto" />  <!-- Continuous ON Button -->
+                                            <ColumnDefinition Width="Auto" />  <!-- Continuous Loop Button -->
+                                            <ColumnDefinition Width="Auto" />  <!-- Stop All Button -->
+                                            <ColumnDefinition Width="*" />     <!-- Status Badge -->
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                                            <Border Background="#89B4FA" Width="3" Height="16" CornerRadius="1" Margin="0,0,6,0" />
+                                            <TextBlock Text="ĐIỀU KHIỂN LIÊN TỤC:" Foreground="#CDD6F4" FontWeight="Bold" FontSize="11" VerticalAlignment="Center" />
+                                        </StackPanel>
+
+                                        <TextBlock Grid.Column="1" Text="Từ:" Foreground="#A6ADC8" FontWeight="SemiBold" FontSize="11"
+                                                   VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <ComboBox Grid.Column="2" ItemsSource="{Binding AvailableLightChannels}"
+                                                  SelectedItem="{Binding ContinuousStartChannel, Mode=TwoWay}"
+                                                  ItemStringFormat="CH{0}" VerticalAlignment="Center" />
+
+                                        <TextBlock Grid.Column="3" Text="Đến:" Foreground="#A6ADC8" FontWeight="SemiBold" FontSize="11"
+                                                   VerticalAlignment="Center" Margin="10,0,6,0" />
+                                        <ComboBox Grid.Column="4" ItemsSource="{Binding AvailableLightChannels}"
+                                                  SelectedItem="{Binding ContinuousEndChannel, Mode=TwoWay}"
+                                                  ItemStringFormat="CH{0}" VerticalAlignment="Center" />
+
+                                        <TextBlock Grid.Column="5" Text="Chu kỳ:" Foreground="#A6ADC8" FontWeight="SemiBold" FontSize="11"
+                                                   VerticalAlignment="Center" Margin="10,0,6,0" />
+                                        <TextBox Grid.Column="6" Text="{Binding LoopIntervalMs, UpdateSourceTrigger=PropertyChanged}"
+                                                 Background="#1E1E2E" Foreground="#CDD6F4" BorderBrush="#45475A" BorderThickness="1"
+                                                 Padding="6,3" FontSize="11" VerticalAlignment="Center" FontFamily="Consolas"
+                                                 HorizontalContentAlignment="Center" ToolTip="Thời gian sáng mỗi kênh (1 - 10000 ms)" />
+                                        <TextBlock Grid.Column="7" Text="ms" Foreground="#585B70" FontSize="11" VerticalAlignment="Center" Margin="4,0,12,0" />
+
+                                        <Button Grid.Column="8" Content="{Binding ContinuousRangeButtonText}" Command="{Binding ToggleContinuousRangeCommand}"
+                                                Background="{Binding IsContinuousRangeOn, Converter={StaticResource BoolToColor}}"
+                                                Foreground="White" FontWeight="Bold" Padding="12,5" FontSize="11" Margin="2,0"
+                                                BorderBrush="#45475A" BorderThickness="1" Cursor="Hand"
+                                                ToolTip="Bật sáng đồng thời các kênh đã chọn theo độ sáng setup" />
+
+                                        <Button Grid.Column="9" Content="{Binding ContinuousLoopButtonText}" Command="{Binding ToggleContinuousLoopCommand}"
+                                                Background="{Binding IsLoopRunning, Converter={StaticResource BoolToOrangeColor}}"
+                                                Foreground="White" FontWeight="Bold" Padding="12,5" FontSize="11" Margin="2,0"
+                                                BorderBrush="#45475A" BorderThickness="1" Cursor="Hand"
+                                                ToolTip="Chạy vòng lặp sáng tuần tự từng kênh liên tục theo chu kỳ thời gian (ms)" />
+
+                                        <Button Grid.Column="10" Content="⏹ DỪNG TẤT CẢ" Command="{Binding StopContinuousLightCommand}"
+                                                Style="{StaticResource DisconnectButton}" Padding="10,5" FontSize="11" Margin="4,0,8,0"
+                                                ToolTip="Dừng ngay vòng lặp và tắt toàn bộ đèn liên tục" />
+
+                                        <Border Grid.Column="11" Background="#181825" CornerRadius="4" Padding="8,4" VerticalAlignment="Center" HorizontalAlignment="Right"
+                                                BorderBrush="#313244" BorderThickness="1">
+                                            <TextBlock Text="{Binding ContinuousStatusText}" FontSize="11" FontWeight="SemiBold" Foreground="#89B4FA" />
+                                        </Border>
+                                    </Grid>
+                                </Border>
+
                                 <!-- 8 Channels Grid -->
-                                <ItemsControl Grid.Row="2" ItemsSource="{Binding LightChannels}">
+                                <ItemsControl Grid.Row="3" ItemsSource="{Binding LightChannels}">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
                                             <UniformGrid Columns="8" />

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -159,6 +160,98 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     // ── Light Controller Channels (Rsee PW-D-24W20-8TE) ──────────────
     public ObservableCollection<LightChannelViewModel> LightChannels { get; } = new();
+
+    // ── Continuous Light Control (Điều Khiển Đèn Liên Tục) ─────────────
+    public int[] AvailableLightChannels { get; } = [1, 2, 3, 4, 5, 6, 7, 8];
+
+    private int _continuousStartChannel = 1;
+    public int ContinuousStartChannel
+    {
+        get => _continuousStartChannel;
+        set
+        {
+            if (SetProperty(ref _continuousStartChannel, Math.Clamp(value, 1, 8)))
+            {
+                OnPropertyChanged(nameof(ContinuousRangeButtonText));
+                OnPropertyChanged(nameof(ContinuousLoopButtonText));
+                UpdateContinuousStatusText();
+            }
+        }
+    }
+
+    private int _continuousEndChannel = 4;
+    public int ContinuousEndChannel
+    {
+        get => _continuousEndChannel;
+        set
+        {
+            if (SetProperty(ref _continuousEndChannel, Math.Clamp(value, 1, 8)))
+            {
+                OnPropertyChanged(nameof(ContinuousRangeButtonText));
+                OnPropertyChanged(nameof(ContinuousLoopButtonText));
+                UpdateContinuousStatusText();
+            }
+        }
+    }
+
+    private int _loopIntervalMs = 500;
+    public int LoopIntervalMs
+    {
+        get => _loopIntervalMs;
+        set
+        {
+            if (SetProperty(ref _loopIntervalMs, Math.Clamp(value, 1, 10000)))
+            {
+                UpdateContinuousStatusText();
+            }
+        }
+    }
+
+    private bool _isContinuousRangeOn;
+    public bool IsContinuousRangeOn
+    {
+        get => _isContinuousRangeOn;
+        private set
+        {
+            if (SetProperty(ref _isContinuousRangeOn, value))
+            {
+                OnPropertyChanged(nameof(ContinuousRangeButtonText));
+                UpdateContinuousStatusText();
+            }
+        }
+    }
+
+    private bool _isLoopRunning;
+    public bool IsLoopRunning
+    {
+        get => _isLoopRunning;
+        private set
+        {
+            if (SetProperty(ref _isLoopRunning, value))
+            {
+                OnPropertyChanged(nameof(ContinuousLoopButtonText));
+                UpdateContinuousStatusText();
+            }
+        }
+    }
+
+    private string _continuousStatusText = "Sẵn sàng (CH1..CH4)";
+    public string ContinuousStatusText
+    {
+        get => _continuousStatusText;
+        private set => SetProperty(ref _continuousStatusText, value);
+    }
+
+    public string ContinuousRangeButtonText =>
+        IsContinuousRangeOn
+            ? $"🌑 TẮT LIÊN TỤC (CH{Math.Min(ContinuousStartChannel, ContinuousEndChannel)}..CH{Math.Max(ContinuousStartChannel, ContinuousEndChannel)})"
+            : $"☀ BẬT LIÊN TỤC (CH{Math.Min(ContinuousStartChannel, ContinuousEndChannel)}..CH{Math.Max(ContinuousStartChannel, ContinuousEndChannel)})";
+
+    public string ContinuousLoopButtonText =>
+        IsLoopRunning
+            ? $"⏹ DỪNG VÒNG LẶP (CH{Math.Min(ContinuousStartChannel, ContinuousEndChannel)}➔CH{Math.Max(ContinuousStartChannel, ContinuousEndChannel)})"
+            : $"🔄 CHẠY VÒNG LẶP (CH{Math.Min(ContinuousStartChannel, ContinuousEndChannel)}➔CH{Math.Max(ContinuousStartChannel, ContinuousEndChannel)})";
+
 
     // ── Light Controller IP / Port / Ping Settings ────────────────────
     private string _lightIpAddress = "192.168.1.100";
@@ -353,6 +446,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ICommand TurnOnAllLightsCommand { get; }
     public ICommand TurnOffAllLightsCommand { get; }
     public ICommand CycleTestLightsCommand { get; }
+    public ICommand ToggleContinuousRangeCommand { get; }
+    public ICommand ToggleContinuousLoopCommand { get; }
+    public ICommand StopContinuousLightCommand { get; }
     public ICommand PingLightCommand { get; }
     public ICommand SaveLightSettingsCommand { get; }
     public ICommand PingPlcCommand { get; }
@@ -467,6 +563,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         TurnOnAllLightsCommand = new AsyncRelayCommand(TurnOnAllLightsAsync);
         TurnOffAllLightsCommand = new AsyncRelayCommand(TurnOffAllLightsAsync);
         CycleTestLightsCommand = new AsyncRelayCommand(CycleTestLightsAsync);
+        ToggleContinuousRangeCommand = new AsyncRelayCommand(ToggleContinuousRangeAsync);
+        ToggleContinuousLoopCommand = new AsyncRelayCommand(ToggleContinuousLoopAsync);
+        StopContinuousLightCommand = new AsyncRelayCommand(StopAllContinuousLightAsync);
         PingLightCommand = new AsyncRelayCommand(PingLightAsync);
         SaveLightSettingsCommand = new AsyncRelayCommand(SaveLightSettingsAsync);
         PingPlcCommand = new AsyncRelayCommand(PingPlcAsync);
@@ -1151,6 +1250,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         try
         {
+            StopContinuousLoop();
+            IsContinuousRangeOn = false;
             await _lightController.DisconnectAsync();
             foreach (var ch in LightChannels)
             {
@@ -1219,6 +1320,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         try
         {
+            StopContinuousLoop();
+            IsContinuousRangeOn = false;
+
             if (!_lightController.IsConnected) return;
 
             AppendLog("Turning OFF all light channels (CH1-CH8)...");
@@ -1269,6 +1373,299 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             AppendLog($"❌ Light sequence test failed: {ex.Message}");
             _logger.LogError(ex, "Light sequence test failed.");
+        }
+    }
+
+    // ── Continuous Light Control Implementation ───────────────────────────
+    private CancellationTokenSource? _continuousLoopCts;
+
+    private async Task ToggleContinuousRangeAsync()
+    {
+        try
+        {
+            if (IsContinuousRangeOn)
+            {
+                await StopContinuousRangeAsync();
+                return;
+            }
+
+            // Stop sequential loop if running
+            StopContinuousLoop();
+
+            if (!_lightController.IsConnected)
+            {
+                AppendLog("Đang kết nối bộ điều khiển đèn Rsee...");
+                await ConnectLightAsync();
+            }
+
+            int start = Math.Min(ContinuousStartChannel, ContinuousEndChannel);
+            int end = Math.Max(ContinuousStartChannel, ContinuousEndChannel);
+
+            AppendLog($"Bật sáng liên tục dải kênh CH{start}..CH{end} theo độ sáng đã setup...");
+
+            for (int i = 1; i <= LightChannels.Count; i++)
+            {
+                var ch = LightChannels[i - 1];
+                if (i >= start && i <= end)
+                {
+                    int intensity = ch.Intensity > 0 ? ch.Intensity : 100;
+                    await _lightController.SetChannelAsync(ch.Channel, intensity);
+                    await _lightController.TurnOnAsync(ch.Channel);
+                    SetChannelOnState(ch, true);
+                }
+                else
+                {
+                    await _lightController.TurnOffAsync(ch.Channel);
+                    SetChannelOnState(ch, false);
+                }
+            }
+
+            IsContinuousRangeOn = true;
+            AppendLog($"✓ Đã bật sáng liên tục các kênh CH{start}..CH{end}.");
+        }
+        catch (Exception ex)
+        {
+            IsContinuousRangeOn = false;
+            AppendLog($"❌ Lỗi bật đèn liên tục: {ex.Message}");
+            _logger.LogError(ex, "Failed to start continuous lighting.");
+        }
+    }
+
+    private async Task StopContinuousRangeAsync()
+    {
+        int start = Math.Min(ContinuousStartChannel, ContinuousEndChannel);
+        int end = Math.Max(ContinuousStartChannel, ContinuousEndChannel);
+
+        try
+        {
+            for (int i = start; i <= end && i <= LightChannels.Count; i++)
+            {
+                var ch = LightChannels[i - 1];
+                await _lightController.TurnOffAsync(ch.Channel);
+                SetChannelOnState(ch, false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error turning off continuous range.");
+        }
+        finally
+        {
+            IsContinuousRangeOn = false;
+            AppendLog($"Đã tắt chế độ sáng liên tục CH{start}..CH{end}.");
+        }
+    }
+
+    private async Task ToggleContinuousLoopAsync()
+    {
+        if (IsLoopRunning)
+        {
+            StopContinuousLoop();
+            return;
+        }
+
+        try
+        {
+            if (IsContinuousRangeOn)
+            {
+                await StopContinuousRangeAsync();
+            }
+
+            if (!_lightController.IsConnected)
+            {
+                AppendLog("Đang kết nối bộ điều khiển đèn Rsee...");
+                await ConnectLightAsync();
+            }
+
+            _continuousLoopCts?.Cancel();
+            _continuousLoopCts?.Dispose();
+            _continuousLoopCts = new CancellationTokenSource();
+
+            IsLoopRunning = true;
+            var token = _continuousLoopCts.Token;
+            _ = Task.Run(() => RunContinuousLoopAsync(token), token);
+        }
+        catch (Exception ex)
+        {
+            IsLoopRunning = false;
+            AppendLog($"❌ Không thể khởi động vòng lặp đèn: {ex.Message}");
+            _logger.LogError(ex, "Failed to start continuous loop.");
+        }
+    }
+
+    private void StopContinuousLoop()
+    {
+        if (_continuousLoopCts != null && !_continuousLoopCts.IsCancellationRequested)
+        {
+            try
+            {
+                _continuousLoopCts.Cancel();
+            }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
+    private async Task StopAllContinuousLightAsync()
+    {
+        StopContinuousLoop();
+        await StopContinuousRangeAsync();
+        await TurnOffAllLightsAsync();
+    }
+
+    private async Task RunContinuousLoopAsync(CancellationToken token)
+    {
+        int start = Math.Min(ContinuousStartChannel, ContinuousEndChannel);
+        int end = Math.Max(ContinuousStartChannel, ContinuousEndChannel);
+        int interval = Math.Max(1, LoopIntervalMs);
+        bool isFastMode = interval < 30;
+
+        AppendLog($"═══ BẮT ĐẦU VÒNG LẶP SÁNG LIÊN TỤC: CH{start} ➔ CH{end} (Chu kỳ: {interval}ms) ═══");
+
+        try
+        {
+            // Initial clear of all channels
+            await _lightController.TurnOffAllAsync(token);
+            foreach (var ch in LightChannels)
+            {
+                SetChannelOnState(ch, false, fastMode: false);
+            }
+
+            // Pre-set intensities once to avoid redundant command packets during rapid cycling
+            for (int chNum = start; chNum <= end; chNum++)
+            {
+                if (chNum <= LightChannels.Count)
+                {
+                    var ch = LightChannels[chNum - 1];
+                    int intensity = ch.Intensity > 0 ? ch.Intensity : 100;
+                    await _lightController.SetChannelAsync(ch.Channel, intensity, token);
+                }
+            }
+
+            while (!token.IsCancellationRequested)
+            {
+                for (int chNum = start; chNum <= end; chNum++)
+                {
+                    token.ThrowIfCancellationRequested();
+
+                    if (chNum <= LightChannels.Count)
+                    {
+                        var ch = LightChannels[chNum - 1];
+
+                        await _lightController.TurnOnAsync(ch.Channel, token);
+                        SetChannelOnState(ch, true, isFastMode);
+
+                        await AccurateDelayAsync(interval, token);
+
+                        await _lightController.TurnOffAsync(ch.Channel, token);
+                        SetChannelOnState(ch, false, isFastMode);
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected cancellation
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"❌ Vòng lặp đèn gặp sự cố: {ex.Message}");
+            _logger.LogError(ex, "Continuous loop exception.");
+        }
+        finally
+        {
+            IsLoopRunning = false;
+            try
+            {
+                await _lightController.TurnOffAllAsync(CancellationToken.None);
+            }
+            catch { }
+
+            foreach (var ch in LightChannels)
+            {
+                SetChannelOnState(ch, false, fastMode: false);
+            }
+            AppendLog("═══ ĐÃ DỪNG VÒNG LẶP SÁNG LIÊN TỤC ═══");
+        }
+    }
+
+    private static async Task AccurateDelayAsync(int milliseconds, CancellationToken cancellationToken)
+    {
+        if (milliseconds <= 0) return;
+
+        if (milliseconds >= 25)
+        {
+            await Task.Delay(milliseconds, cancellationToken);
+            return;
+        }
+
+        // High-resolution precision delay for sub-25ms intervals using Stopwatch
+        var sw = Stopwatch.StartNew();
+        long targetTicks = (long)(milliseconds * (Stopwatch.Frequency / 1000.0));
+
+        while (sw.ElapsedTicks < targetTicks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            long remainingTicks = targetTicks - sw.ElapsedTicks;
+            long remainingMs = remainingTicks * 1000 / Stopwatch.Frequency;
+
+            if (remainingMs > 5)
+            {
+                await Task.Delay(1, cancellationToken);
+            }
+            else if (remainingTicks > 500)
+            {
+                Thread.Yield();
+            }
+            else
+            {
+                Thread.SpinWait(20);
+            }
+        }
+    }
+
+    private void UpdateContinuousStatusText()
+    {
+        int start = Math.Min(ContinuousStartChannel, ContinuousEndChannel);
+        int end = Math.Max(ContinuousStartChannel, ContinuousEndChannel);
+
+        if (IsLoopRunning)
+        {
+            ContinuousStatusText = $"🔄 Đang lặp CH{start}➔CH{end} ({LoopIntervalMs}ms)";
+        }
+        else if (IsContinuousRangeOn)
+        {
+            ContinuousStatusText = $"☀ Đang sáng liên tục CH{start}..CH{end}";
+        }
+        else
+        {
+            ContinuousStatusText = $"Sẵn sàng (CH{start}..CH{end})";
+        }
+    }
+
+    private static void SetChannelOnState(LightChannelViewModel ch, bool isOn, bool fastMode = false)
+    {
+        if (fastMode)
+        {
+            // In high-speed mode (< 30ms), non-blocking BeginInvoke ensures background loop isn't delayed
+            if (Application.Current?.Dispatcher != null && !Application.Current.Dispatcher.CheckAccess())
+            {
+                Application.Current.Dispatcher.BeginInvoke(() => ch.IsOn = isOn);
+            }
+            else
+            {
+                ch.IsOn = isOn;
+            }
+            return;
+        }
+
+        if (Application.Current?.Dispatcher != null && !Application.Current.Dispatcher.CheckAccess())
+        {
+            Application.Current.Dispatcher.Invoke(() => ch.IsOn = isOn);
+        }
+        else
+        {
+            ch.IsOn = isOn;
         }
     }
 
@@ -1387,6 +1784,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        StopContinuousLoop();
+        _continuousLoopCts?.Dispose();
         _cameraService.FrameReceived -= OnFrameReceived;
         _triggerMonitor?.Dispose();
         _heartbeatService?.Dispose();
