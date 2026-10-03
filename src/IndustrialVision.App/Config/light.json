@@ -1,0 +1,22 @@
+{
+  "_comment": "Real Light Controller Configuration for Rsee PW-D-24W20-8TE (8-channel LAN Ethernet)",
+  "Light": {
+    "IpAddress": "192.168.1.100",
+    "Port": 5000,
+    "Protocol": "ASCII_WORDOP",
+    "ChannelCount": 8,
+    "DefaultIntensity": 100,
+    "CommandTimeoutMs": 3000,
+
+    "Channels": [
+      { "Channel": 1, "Name": "CH1", "Intensity": 100, "Enabled": true },
+      { "Channel": 2, "Name": "CH2", "Intensity": 100, "Enabled": true },
+      { "Channel": 3, "Name": "CH3", "Intensity": 100, "Enabled": true },
+      { "Channel": 4, "Name": "CH4", "Intensity": 100, "Enabled": true },
+      { "Channel": 5, "Name": "CH5", "Intensity": 100, "Enabled": true },
+      { "Channel": 6, "Name": "CH6", "Intensity": 100, "Enabled": true },
+      { "Channel": 7, "Name": "CH7", "Intensity": 100, "Enabled": true },
+      { "Channel": 8, "Name": "CH8", "Intensity": 100, "Enabled": true }
+    ]
+  }
+}

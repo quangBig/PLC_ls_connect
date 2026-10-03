@@ -1,0 +1,11 @@
+{
+  "_comment": "NEEDS_CONFIGURATION + NEEDS_PROTOCOL_INFORMATION — OCR interface from anh Hiệp unknown.",
+  "OCR": {
+    "Type": "",
+    "DllPath": "",
+    "ExecutablePath": "",
+    "ApiUrl": "",
+    "ModelPath": "",
+    "TimeoutMs": 0
+  }
+}

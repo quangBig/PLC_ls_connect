@@ -1,0 +1,18 @@
+{
+  "_comment": "NEEDS_CONFIGURATION — All camera values must be configured before connecting to real hardware.",
+  "Camera": {
+    "Name": "",
+    "SerialNumber": "",
+    "IpAddress": "",
+    "ConnectionType": "",
+    "Exposure": 0,
+    "Gain": 0,
+    "TriggerMode": "",
+    "TriggerSource": "",
+    "PixelFormat": "",
+    "Width": 0,
+    "Height": 0,
+    "FrameRate": 0,
+    "TimeoutMs": 0
+  }
+}

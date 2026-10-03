@@ -1,0 +1,36 @@
+{
+  "_comment": "PLC Configuration — NEVER HARDCODE. Configure according to machine specification.",
+  "PLC": {
+    "Name": "PLC_LS_MAIN",
+    "Model": "XGB XBM-DN32HP",
+    "Protocol": "XGT_DEDICATED",
+    "IpAddress": "NEEDS_CONFIGURATION",
+    "Port": 2004,
+    "ConnectionTimeoutMs": 3000,
+    "ReadTimeoutMs": 3000,
+    "WriteTimeoutMs": 3000,
+    "RetryCount": 3,
+    "ReconnectDelayMs": 1000,
+    "ResultDataType": "UNKNOWN",
+
+    "Addresses": {
+      "Ready": "NEEDS_CONFIGURATION",
+      "Trigger": "NEEDS_CONFIGURATION",
+      "Busy": "NEEDS_CONFIGURATION",
+      "CaptureComplete": "NEEDS_CONFIGURATION",
+      "Result": "NEEDS_CONFIGURATION",
+      "OK": "NEEDS_CONFIGURATION",
+      "NG": "NEEDS_CONFIGURATION",
+      "Error": "NEEDS_CONFIGURATION",
+      "Reset": "NEEDS_CONFIGURATION",
+      "Heartbeat": "NEEDS_CONFIGURATION"
+    },
+
+    "Heartbeat": {
+      "Enabled": false,
+      "Address": "NEEDS_CONFIGURATION",
+      "IntervalMs": 1000,
+      "Mode": "Toggle"
+    }
+  }
+}
