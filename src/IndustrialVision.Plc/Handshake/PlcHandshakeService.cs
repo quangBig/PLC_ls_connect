@@ -65,6 +65,7 @@ public sealed class PlcHandshakeService : IPlcHandshakeService
 
     public async Task SetResultOkAsync(CancellationToken cancellationToken = default)
     {
+        await WriteVerdictAsync(1, cancellationToken);
         var okAddr = _config.Addresses.OK;
         var ngAddr = _config.Addresses.NG;
 
@@ -82,6 +83,7 @@ public sealed class PlcHandshakeService : IPlcHandshakeService
 
     public async Task SetResultNgAsync(CancellationToken cancellationToken = default)
     {
+        await WriteVerdictAsync(2, cancellationToken);
         var okAddr = _config.Addresses.OK;
         var ngAddr = _config.Addresses.NG;
 
@@ -123,6 +125,10 @@ public sealed class PlcHandshakeService : IPlcHandshakeService
 
         switch (dataType)
         {
+            case "VERDICT_WORD":
+                // SetResultOk/Ng already wrote the numeric verdict. Never overwrite it with OCR text.
+                return;
+
             case "WORDARRAY":
             case "ASCII":
                 // Encode ASCII string into 16-bit registers (2 chars per word, big-endian)
@@ -144,11 +150,23 @@ public sealed class PlcHandshakeService : IPlcHandshakeService
         var ngAddr = _config.Addresses.NG;
         var compAddr = _config.Addresses.CaptureComplete;
 
+        // Remove completion before changing its associated verdict.
+        if (!string.IsNullOrWhiteSpace(compAddr)) await _plc.WriteBitAsync(compAddr, false, cancellationToken);
         if (!string.IsNullOrWhiteSpace(okAddr)) await _plc.WriteBitAsync(okAddr, false, cancellationToken);
         if (!string.IsNullOrWhiteSpace(ngAddr)) await _plc.WriteBitAsync(ngAddr, false, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(compAddr)) await _plc.WriteBitAsync(compAddr, false, cancellationToken);
+        await WriteVerdictAsync(0, cancellationToken);
 
         _logger.LogDebug("[HANDSHAKE] Result flags cleared.");
+    }
+
+    private async Task WriteVerdictAsync(ushort verdict, CancellationToken cancellationToken)
+    {
+        if (!_config.UsesVerdictWord) return;
+        if (string.IsNullOrWhiteSpace(_config.Addresses.Result))
+            throw new InvalidOperationException("VERDICT_WORD requires a Result word address.");
+
+        await _plc.WriteWordAsync(_config.Addresses.Result, verdict, cancellationToken);
+        _logger.LogInformation("[HANDSHAKE] Verdict {Verdict} written to {Address}", verdict, _config.Addresses.Result);
     }
 
     public async Task<bool> ReadTriggerAsync(CancellationToken cancellationToken = default)

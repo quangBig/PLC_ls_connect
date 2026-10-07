@@ -59,6 +59,8 @@ public static class ServiceRegistration
         services.AddSingleton<ConfigurationValidator>();
 
         // ── Hardware Services ──────────────────────────────────────────
+        // Chọn camera một lần lúc khởi động: true dùng ảnh giả, false dùng Basler thật.
+        // LIVE và CAPTURE trên camera thật đều dùng SDK/runtime pylon đã cài trên máy.
         if (configService.System.SimulationMode)
         {
             RegisterSimulationServices(services);
@@ -81,6 +83,7 @@ public static class ServiceRegistration
     /// </summary>
     private static void RegisterSimulationServices(IServiceCollection services)
     {
+        // MockCameraService tự tạo ảnh thử; không mở camera và không gọi pylon.
         services.AddSingleton<ICameraService, MockCameraService>();
         services.AddSingleton<IPlcService, MockPlcService>();
         // Light controller: Real Rsee PW-D-24W20-8TE (8-channel LAN)
@@ -93,7 +96,7 @@ public static class ServiceRegistration
     /// </summary>
     private static void RegisterRealServices(IServiceCollection services, PlcConfiguration plcConfig)
     {
-        // Basler pylon SDK for real camera hardware; simulation uses MockCameraService.
+        // Camera thật: quét, kết nối, LIVE và chụp một ảnh đều đi qua service này.
         services.AddSingleton<ICameraService, BaslerCameraService>();
 
         // Real Light Controller: Rsee PW-D-24W20-8TE

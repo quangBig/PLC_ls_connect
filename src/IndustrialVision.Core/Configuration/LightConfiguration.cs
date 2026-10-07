@@ -3,12 +3,12 @@ namespace IndustrialVision.Core.Configuration;
 /// <summary>
 /// Light controller configuration — all values read from light.json.
 /// 
-/// ❌ CHƯA THỂ IMPLEMENT HARDWARE THẬT
-/// Reason: Light controller protocol is UNKNOWN.
-/// Required:
-///   1. Controller brand/model (RSee?)
-///   2. Communication protocol documentation
-///   3. Command format specification
+/// Used by the Rsee LAN controller driver.
+/// Set IP, port and protocol for the connected controller.
+/// Supported command formats in RseeLightController:
+///   1. ASCII_WORDOP
+///   2. ASCII_OPT
+///   3. HEX
 /// </summary>
 public sealed class LightConfiguration
 {

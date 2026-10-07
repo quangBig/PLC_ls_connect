@@ -1,36 +1,43 @@
 {
-  "_comment": "PLC Configuration — NEVER HARDCODE. Configure according to machine specification.",
+  "_comment": "Real LS test profile. M0030F (%MX495) is the separate communication test bit selected from Used Device. Ready is unset pending confirmation of D02040.0; PLC owns M00200/M00201.",
   "PLC": {
-    "Name": "PLC_LS_MAIN",
+    "Name": "LS_LADDER_TEST",
     "Model": "XGB XBM-DN32HP",
     "Protocol": "XGT_DEDICATED",
-    "IpAddress": "NEEDS_CONFIGURATION",
+    "IpAddress": "192.168.1.2",
     "Port": 2004,
     "ConnectionTimeoutMs": 3000,
     "ReadTimeoutMs": 3000,
     "WriteTimeoutMs": 3000,
-    "RetryCount": 3,
-    "ReconnectDelayMs": 1000,
-    "ResultDataType": "UNKNOWN",
-
+    "RetryCount": 0,
+    "ResultDataType": "VERDICT_WORD",
+    "CaptureCompleteAfterResult": true,
+    "WaitForTriggerResetAfterResult": true,
+    "TriggerResetTimeoutMs": 3000,
     "Addresses": {
-      "Ready": "NEEDS_CONFIGURATION",
-      "Trigger": "NEEDS_CONFIGURATION",
-      "Busy": "NEEDS_CONFIGURATION",
-      "CaptureComplete": "NEEDS_CONFIGURATION",
-      "Result": "NEEDS_CONFIGURATION",
-      "OK": "NEEDS_CONFIGURATION",
-      "NG": "NEEDS_CONFIGURATION",
-      "Error": "NEEDS_CONFIGURATION",
-      "Reset": "NEEDS_CONFIGURATION",
-      "Heartbeat": "NEEDS_CONFIGURATION"
+      "Ready": "",
+      "Trigger": "%DX16640",
+      "Busy": "",
+      "CaptureComplete": "%DX32642",
+      "Result": "%DW2050",
+      "OK": "",
+      "NG": "",
+      "Error": "",
+      "Reset": "",
+      "Heartbeat": ""
     },
-
     "Heartbeat": {
       "Enabled": false,
-      "Address": "NEEDS_CONFIGURATION",
+      "Address": "%MX495",
       "IntervalMs": 1000,
       "Mode": "Toggle"
-    }
+    },
+    "Diagnostics": {
+      "Enabled": true,
+      "PollIntervalMs": 500,
+      "PlcOkAddress": "%MX320",
+      "PlcNgAddress": "%MX321"
+    },
+    "RequiresReadySignal": true
   }
 }

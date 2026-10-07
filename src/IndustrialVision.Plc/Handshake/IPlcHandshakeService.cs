@@ -28,7 +28,7 @@ public interface IPlcHandshakeService
     /// <summary>Write OCR text result to PLC according to configured ResultDataType.</summary>
     Task WriteOcrResultAsync(string resultText, CancellationToken cancellationToken = default);
 
-    /// <summary>Clear result flags (OK, NG, CaptureComplete) before next cycle.</summary>
+    /// <summary>Clear completion before result flags and the numeric verdict, after acknowledgement or before a new cycle.</summary>
     Task ClearResultFlagsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Read Trigger signal current state from PLC.</summary>

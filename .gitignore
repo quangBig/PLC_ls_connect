@@ -12,6 +12,7 @@ packages/
 *.nupkg
 
 ## Build results
+artifacts/
 [Dd]ebug/
 [Rr]elease/
 x64/

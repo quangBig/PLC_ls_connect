@@ -20,6 +20,13 @@ public sealed class PlcHeartbeatService : IDisposable
     private bool _bitState;
     private ushort _counter;
     private bool _disposed;
+    private string? _activeAddress;
+    private string _activeMode = "Toggle";
+
+    public int VerifiedTicks { get; private set; }
+    public DateTimeOffset? LastVerifiedAt { get; private set; }
+    public string? LastError { get; private set; }
+    public event EventHandler<string>? HeartbeatFailed;
 
     public bool IsRunning => _heartbeatTask != null && !_heartbeatTask.IsCompleted;
 
@@ -36,9 +43,10 @@ public sealed class PlcHeartbeatService : IDisposable
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public void Start()
+    public void Start(bool manual = false)
     {
-        if (!_config.Heartbeat.Enabled)
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_config.Heartbeat.Enabled && !manual)
         {
             _logger.LogInformation("[HEARTBEAT] Heartbeat is disabled in configuration.");
             return;
@@ -52,16 +60,30 @@ public sealed class PlcHeartbeatService : IDisposable
         }
 
         if (IsRunning) return;
+        if (!_plc.IsConnected) throw new InvalidOperationException("Connect PLC before heartbeat.");
+        var reserved = new[] { _config.Addresses.Ready, _config.Addresses.Trigger,
+            _config.Addresses.Busy, _config.Addresses.CaptureComplete, _config.Addresses.Error,
+            _config.Addresses.Reset, _config.Addresses.OK, _config.Addresses.NG, _config.Addresses.Result };
+        if (reserved.Any(value => !string.IsNullOrWhiteSpace(value)
+            && string.Equals(value, address, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Heartbeat must use a separate test address.");
 
+        _activeAddress = address;
+        _activeMode = _config.Heartbeat.Mode;
+        _bitState = false;
+        VerifiedTicks = 0;
+        LastVerifiedAt = null;
+        LastError = null;
         _cts = new CancellationTokenSource();
         int interval = _config.Heartbeat.IntervalMs > 0 ? _config.Heartbeat.IntervalMs : 1000;
         _logger.LogInformation("[HEARTBEAT] Started to '{Address}' (Interval: {Interval}ms, Mode: {Mode}).",
             address, interval, _config.Heartbeat.Mode);
 
-        _heartbeatTask = Task.Run(() => HeartbeatLoopAsync(address, interval, _cts.Token));
+        var token = _cts.Token;
+        _heartbeatTask = Task.Run(() => HeartbeatLoopAsync(address, _activeMode, interval, token));
     }
 
-    public async Task StopAsync()
+    public async Task StopAsync(bool resetOutput = true)
     {
         if (_cts != null)
         {
@@ -79,10 +101,15 @@ public sealed class PlcHeartbeatService : IDisposable
             _heartbeatTask = null;
         }
 
+        var address = _activeAddress;
+        _activeAddress = null;
+        if (resetOutput && address != null && _plc.IsConnected
+            && string.Equals(_activeMode, "Toggle", StringComparison.OrdinalIgnoreCase))
+            await _plc.WriteBitAsync(address, false);
         _logger.LogInformation("[HEARTBEAT] Stopped.");
     }
 
-    private async Task HeartbeatLoopAsync(string address, int intervalMs, CancellationToken token)
+    private async Task HeartbeatLoopAsync(string address, string mode, int intervalMs, CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
@@ -90,20 +117,29 @@ public sealed class PlcHeartbeatService : IDisposable
             {
                 if (_plc.IsConnected)
                 {
-                    if (string.Equals(_config.Heartbeat.Mode, "Counter", StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(mode, "Counter", StringComparison.OrdinalIgnoreCase))
                     {
                         _counter++;
                         await _plc.WriteWordAsync(address, _counter, token);
-                        HeartbeatTick?.Invoke(this, (_counter % 2) != 0);
+                        if (await _plc.ReadWordAsync(address, token) != _counter)
+                            throw new InvalidOperationException("Heartbeat counter readback does not match.");
+                        MarkVerified((_counter % 2) != 0);
                     }
                     else
                     {
                         _bitState = !_bitState;
                         await _plc.WriteBitAsync(address, _bitState, token);
-                        HeartbeatTick?.Invoke(this, _bitState);
+                        if (await _plc.ReadBitAsync(address, token) != _bitState)
+                            throw new InvalidOperationException("Heartbeat bit readback does not match.");
+                        MarkVerified(_bitState);
                     }
                 }
 
+                else
+                {
+                    LastError = "PLC is not connected.";
+                    HeartbeatFailed?.Invoke(this, LastError);
+                }
                 await Task.Delay(intervalMs, token);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -112,10 +148,21 @@ public sealed class PlcHeartbeatService : IDisposable
             }
             catch (Exception ex)
             {
+                LastError = ex.Message;
+                HeartbeatFailed?.Invoke(this, LastError);
                 _logger.LogTrace(ex, "[HEARTBEAT] Failed on '{Address}'. Will retry next interval.", address);
-                await Task.Delay(intervalMs, token);
+                try { await Task.Delay(intervalMs, token); }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
             }
         }
+    }
+
+    private void MarkVerified(bool state)
+    {
+        VerifiedTicks++;
+        LastVerifiedAt = DateTimeOffset.Now;
+        LastError = null;
+        HeartbeatTick?.Invoke(this, state);
     }
 
     public void Dispose()

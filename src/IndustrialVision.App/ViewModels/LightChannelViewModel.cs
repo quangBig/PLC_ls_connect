@@ -21,6 +21,13 @@ public sealed class LightChannelViewModel : ViewModelBase
     public int Channel { get; }
     public string Name { get; }
 
+    private bool _useForInspection = true;
+    public bool UseForInspection
+    {
+        get => _useForInspection;
+        set => SetProperty(ref _useForInspection, value);
+    }
+
     public int Intensity
     {
         get => _intensity;

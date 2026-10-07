@@ -6,8 +6,8 @@ namespace IndustrialVision.Core.Configuration;
 public sealed class SystemConfiguration
 {
     /// <summary>
-    /// When true, all hardware services use mock/simulation implementations.
-    /// When false, real hardware services are used.
+    /// When true, camera and PLC are simulated; the Rsee light controller remains real.
+    /// When false, camera and PLC use real drivers. OCR is currently simulated in both modes.
     /// </summary>
     public bool SimulationMode { get; set; }
 

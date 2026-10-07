@@ -42,6 +42,12 @@ public sealed class CameraConfiguration
     /// <summary>Frame rate (for live preview). 0 = use camera default. NEEDS_CONFIGURATION.</summary>
     public double FrameRate { get; set; }
 
+    /// <summary>Lines per live frame on line scan cameras. 0 keeps the capture height.</summary>
+    public int LiveHeight { get; set; } = 64;
+
+    /// <summary>Maximum live exposure in microseconds on line scan cameras. 0 keeps capture exposure.</summary>
+    public double LiveExposure { get; set; } = 1000;
+
     /// <summary>Capture timeout in milliseconds.</summary>
     public int TimeoutMs { get; set; }
 }

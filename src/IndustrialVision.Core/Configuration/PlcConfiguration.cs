@@ -43,15 +43,32 @@ public sealed class PlcConfiguration
     public int ReconnectDelayMs { get; set; } = 1000;
 
     /// <summary>
-    /// Format of OCR result written to PLC: "String", "WordArray", "Ascii", "UNKNOWN".
+    /// Result format: "String", "WordArray", "Ascii", or "VERDICT_WORD" (0=empty, 1=OK, 2=NG).
     /// </summary>
     public string ResultDataType { get; set; } = "UNKNOWN";
+
+    /// <summary>Assert completion only after processing and result writes.</summary>
+    public bool CaptureCompleteAfterResult { get; set; }
+
+    /// <summary>In AUTO, wait for PLC to lower Trigger, then clear completion and the verdict word before Ready.</summary>
+    public bool WaitForTriggerResetAfterResult { get; set; }
+
+    /// <summary>Maximum wait for the PLC to acknowledge completion.</summary>
+    public int TriggerResetTimeoutMs { get; set; } = 3000;
+
+    /// <summary>Require an explicitly mapped Ready bit before arming AUTO.</summary>
+    public bool RequiresReadySignal { get; set; }
+
+    public bool UsesVerdictWord => string.Equals(ResultDataType, "VERDICT_WORD", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>PLC signal address mapping — all from configuration.</summary>
     public PlcAddressMap Addresses { get; set; } = new();
 
     /// <summary>Heartbeat configuration.</summary>
     public PlcHeartbeatConfiguration Heartbeat { get; set; } = new();
+
+    /// <summary>Read-only diagnostics; these PLC-owned outputs are never written by the handshake.</summary>
+    public PlcDiagnosticsConfiguration Diagnostics { get; set; } = new();
 
     // ── Backward-compatibility bridges ──────────────────────────────
     public int ConnectTimeoutMs
@@ -133,4 +150,13 @@ public sealed class PlcSignalConfiguration
     public string Reset { get; set; } = string.Empty;
     public string Heartbeat { get; set; } = string.Empty;
     public string Result { get; set; } = string.Empty;
+}
+
+/// <summary>Optional periodic reads of handshake registers and PLC-owned result bits.</summary>
+public sealed class PlcDiagnosticsConfiguration
+{
+    public bool Enabled { get; set; }
+    public int PollIntervalMs { get; set; } = 500;
+    public string PlcOkAddress { get; set; } = string.Empty;
+    public string PlcNgAddress { get; set; } = string.Empty;
 }

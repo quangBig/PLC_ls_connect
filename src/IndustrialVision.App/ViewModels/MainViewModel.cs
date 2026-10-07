@@ -4,12 +4,15 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using IndustrialVision.App.Commands;
 using IndustrialVision.Core.Configuration;
 using IndustrialVision.Core.Enums;
 using IndustrialVision.Core.Interfaces;
 using IndustrialVision.Core.Models;
 using IndustrialVision.Infrastructure.Configuration;
+using IndustrialVision.Ocr;
+using IndustrialVision.Plc.Diagnostics;
 using IndustrialVision.Plc.Handshake;
 using IndustrialVision.Plc.Heartbeat;
 using IndustrialVision.Plc.Trigger;
@@ -34,6 +37,31 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly PlcTriggerMonitor? _triggerMonitor;
     private readonly PlcHeartbeatService? _heartbeatService;
     private readonly SemaphoreSlim _cycleLock = new(1, 1);
+    private readonly PlcDiagnosticsService _plcDiagnostics;
+    private readonly CancellationTokenSource _plcDebugCts = new();
+    private readonly DispatcherTimer _plcDebugTimer = new(DispatcherPriority.Background);
+    private bool _plcDebugReading;
+    private string _lastPlcResultSent = "—";
+
+    public PlcDiagnosticSnapshot? PlcDebugSnapshot { get; private set; }
+    private string _plcDebugText = "Chưa đọc PLC.";
+    public string PlcDebugText
+    {
+        get => _plcDebugText;
+        private set => SetProperty(ref _plcDebugText, value);
+    }
+
+    private string _plcHeartbeatStatus = "STOPPED";
+    public string PlcHeartbeatStatus
+    {
+        get => _plcHeartbeatStatus;
+        private set => SetProperty(ref _plcHeartbeatStatus, value);
+    }
+    public string PlcHeartbeatAddress => _configService.Plc.Heartbeat.Address;
+    public ICommand RefreshPlcDebugCommand { get; }
+    public ICommand StartPlcHeartbeatCommand { get; }
+    public ICommand StopPlcHeartbeatCommand { get; }
+
 
     // ── Connection Status Properties ──────────────────────────────────
     private ConnectionStatus _plcStatus = ConnectionStatus.Disconnected;
@@ -133,12 +161,32 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         set => SetProperty(ref _inspectionResultText, value);
     }
 
+    public string[] InspectionResultModes { get; } = ["OCR", "TEST OK", "TEST NG"];
+    private string _inspectionResultMode = "TEST OK";
+    public string InspectionResultMode
+    {
+        get => _inspectionResultMode;
+        set => SetProperty(ref _inspectionResultMode, value);
+    }
+
+    public string InspectionEvaluationNotice => _ocrService is MockOcrService
+        ? "OCR đang giả lập. TEST OK / NG chụp ảnh và trả kết quả thử; chưa đánh giá chất lượng ảnh."
+        : "TEST OK / NG chụp ảnh và trả kết quả thử; chưa đánh giá chất lượng ảnh.";
+
     private InspectionResult _lastResult = InspectionResult.Unknown;
     public InspectionResult LastResult
     {
         get => _lastResult;
         set => SetProperty(ref _lastResult, value);
     }
+
+    // A single slot replaces pending frames instead of growing the dispatcher queue.
+    private ImageFrame? _pendingPreviewFrame;
+    private int _acceptPreviewFrames;
+    private readonly DispatcherTimer _previewTimer = new(DispatcherPriority.Render)
+    {
+        Interval = TimeSpan.FromMilliseconds(33)
+    };
 
     private BitmapSource? _cameraImage;
     public BitmapSource? CameraImage
@@ -523,6 +571,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _handshakeService = handshakeService;
         _triggerMonitor = triggerMonitor;
         _heartbeatService = heartbeatService;
+        _plcDiagnostics = new PlcDiagnosticsService(_plcService, _configService.Plc);
+        _plcDebugTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(100, _configService.Plc.Diagnostics.PollIntervalMs));
+        _plcDebugTimer.Tick += OnPlcDebugTimerTick;
+        if (_configService.Plc.Diagnostics.Enabled) _plcDebugTimer.Start();
 
         // Read config
         ApplicationTitle = _configService.System.ApplicationTitle;
@@ -554,6 +606,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         // Wire up camera frame received for live preview
         _cameraService.FrameReceived += OnFrameReceived;
+        _previewTimer.Tick += RenderLatestPreview;
+        _previewTimer.Start();
 
         // Wire up PLC trigger monitor events
         if (_triggerMonitor != null)
@@ -563,11 +617,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             _triggerMonitor.TriggerFired += async (_, _) =>
             {
-                AppendLog("⚡ PLC Hardware Trigger (Rising Edge 0->1) detected!");
-                await Application.Current.Dispatcher.InvokeAsync(async () =>
+                var operation = Application.Current.Dispatcher.InvokeAsync(async () =>
                 {
+                    if (!IsAutoRunning) return;
+                    AppendLog("⚡ PLC Hardware Trigger (Rising Edge 0->1) detected!");
                     await ExecuteInspectionCycleAsync();
                 });
+                await operation.Task.Unwrap();
             };
         }
 
@@ -575,7 +631,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         if (_heartbeatService != null)
         {
             _heartbeatService.HeartbeatTick += (_, state) =>
-                Application.Current?.Dispatcher.Invoke(() => PlcHeartbeatFlag = state);
+                Application.Current?.Dispatcher.BeginInvoke(() =>
+                {
+                    PlcHeartbeatFlag = state;
+                    PlcHeartbeatStatus = $"VERIFIED {(_heartbeatService.VerifiedTicks)} lần · {(state ? 1 : 0)} · {DateTime.Now:HH:mm:ss}";
+                });
+            _heartbeatService.HeartbeatFailed += (_, error) =>
+                Application.Current?.Dispatcher.BeginInvoke(() => PlcHeartbeatStatus = $"ERROR: {error}");
         }
 
         // Safety net: an exception escaping any button command is logged instead of closing the app
@@ -610,6 +672,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         SaveLightSettingsCommand = new AsyncRelayCommand(SaveLightSettingsAsync);
         PingPlcCommand = new AsyncRelayCommand(PingPlcAsync);
         SavePlcSettingsCommand = new AsyncRelayCommand(SavePlcSettingsAsync);
+        RefreshPlcDebugCommand = new AsyncRelayCommand(() => RefreshPlcDebugAsync());
+        StartPlcHeartbeatCommand = new AsyncRelayCommand(StartPlcHeartbeatAsync);
+        StopPlcHeartbeatCommand = new AsyncRelayCommand(StopPlcHeartbeatAsync);
         InitOcrCommand = new AsyncRelayCommand(InitOcrAsync);
         ResetCommand = new AsyncRelayCommand(ResetAsync);
 
@@ -622,8 +687,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         WritePlcStringCommand = new AsyncRelayCommand(WritePlcStringAsync);
         SimulatePlcTriggerCommand = new AsyncRelayCommand(SimulatePlcTriggerAsync);
         ExecuteCycleCommand = new AsyncRelayCommand(() => ExecuteInspectionCycleAsync());
-        StartAutoInspectionCommand = new AsyncRelayCommand(() => { StartAutoInspection(); return Task.CompletedTask; });
-        StopAutoInspectionCommand = new AsyncRelayCommand(() => { StopAutoInspection(); return Task.CompletedTask; });
+        StartAutoInspectionCommand = new AsyncRelayCommand(StartAutoInspectionAsync);
+        StopAutoInspectionCommand = new AsyncRelayCommand(StopAutoInspectionAsync);
 
         // Initialize 8 channels for Rsee PW-D-24W20-8TE
         InitializeLightChannels();
@@ -671,6 +736,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         AppendLog("Disconnecting all devices...");
         try
         {
+            await StopAutoInspectionAsync();
             if (_cameraService.IsLiveActive)
                 await _cameraService.StopLiveAsync();
 
@@ -773,6 +839,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             if (_cameraService.IsLiveActive)
                 await _cameraService.StopLiveAsync();
+            Volatile.Write(ref _acceptPreviewFrames, 0);
+            Interlocked.Exchange(ref _pendingPreviewFrame, null);
             await _cameraService.DisconnectAsync();
             CameraImage = null;
             CameraMessage = "Camera disconnected.";
@@ -789,6 +857,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         try
         {
+            if (_cameraService.IsLiveActive) return;
+            Interlocked.Exchange(ref _pendingPreviewFrame, null);
+            Volatile.Write(ref _acceptPreviewFrames, 1);
             AppendLog("Starting live preview...");
             await _cameraService.StartLiveAsync();
             CameraMessage = "Live preview active (continuous acquisition).";
@@ -796,6 +867,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            Volatile.Write(ref _acceptPreviewFrames, 0);
+            Interlocked.Exchange(ref _pendingPreviewFrame, null);
             AppendLog($"❌ Live preview error: {ex.Message}");
             _logger.LogError(ex, "Live preview error.");
         }
@@ -805,6 +878,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         try
         {
+            Volatile.Write(ref _acceptPreviewFrames, 0);
+            Interlocked.Exchange(ref _pendingPreviewFrame, null);
             await _cameraService.StopLiveAsync();
             CameraMessage = "Live preview stopped; configured trigger restored.";
             AppendLog("Live preview stopped.");
@@ -820,6 +895,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         try
         {
+            Volatile.Write(ref _acceptPreviewFrames, 0);
+            Interlocked.Exchange(ref _pendingPreviewFrame, null);
             AppendLog("Capturing image...");
             var frame = await _cameraService.CaptureAsync();
             UpdateCameraImage(frame);
@@ -860,6 +937,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             AppendLog($"PLC connecting ({PlcModel} via {PlcProtocol} to {PlcIpAddress.Trim()}:{PlcPort})...");
             await _plcService.ConnectAsync();
 
+            await RefreshPlcDebugAsync();
             AppendLog($"✅ PLC connected successfully to {PlcIpAddress.Trim()}:{PlcPort}. Ready for manual Read/Write test.");
             StatusMessage = $"PLC connected ({PlcIpAddress.Trim()}:{PlcPort})";
         }
@@ -875,6 +953,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         try
         {
+            await StopAutoInspectionAsync();
             await _plcService.DisconnectAsync();
             PlcReadyFlag = false;
             PlcBusyFlag = false;
@@ -886,6 +965,68 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             AppendLog($"❌ PLC disconnect error: {ex.Message}");
             _logger.LogError(ex, "PLC disconnect error.");
         }
+    }
+
+    private async void OnPlcDebugTimerTick(object? sender, EventArgs e)
+        => await RefreshPlcDebugAsync();
+
+    public async Task RefreshPlcDebugAsync(CancellationToken token = default)
+    {
+        if (_plcDebugReading || _plcDebugCts.IsCancellationRequested) return;
+        _plcDebugReading = true;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, _plcDebugCts.Token);
+        try
+        {
+            PlcDebugSnapshot = await _plcDiagnostics.ReadAsync(linked.Token);
+            var s = PlcDebugSnapshot;
+            static string Bit(bool? value) => value.HasValue ? (value.Value ? "1" : "0") : "—";
+            string verdict = s.Result switch
+            {
+                0 => "0 · chưa có kết quả",
+                1 => "1 · OK",
+                2 => "2 · NG",
+                null => "—",
+                _ => $"{s.Result} · KHÔNG PHẢI mã 0/1/2"
+            };
+            PlcDebugText = $"PLC READ: OK · {s.ReadAt:HH:mm:ss.fff}\n"
+                + $"Trigger       [{_configService.Plc.Addresses.Trigger}] = {Bit(s.Trigger)}\n"
+                + $"Complete      [{_configService.Plc.Addresses.CaptureComplete}] = {Bit(s.Complete)}\n"
+                + $"Result        [{_configService.Plc.Addresses.Result}] = {verdict}\n"
+                + $"PLC OK / NG   = {Bit(s.PlcOk)} / {Bit(s.PlcNg)}\n"
+                + $"Heartbeat     [{PlcHeartbeatAddress}] = {Bit(s.Heartbeat)}\n"
+                + $"Lần gửi kết quả: {_lastPlcResultSent}\n"
+                + $"OCR / TEST: {OcrResultText}";
+        }
+        catch (OperationCanceledException) when (linked.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            PlcDebugSnapshot = null;
+            PlcDebugText = $"PLC READ: ERROR · {DateTime.Now:HH:mm:ss}\n{ex.Message}\n"
+                + $"Lần gửi kết quả: {_lastPlcResultSent}";
+        }
+        finally { _plcDebugReading = false; }
+    }
+
+    private Task StartPlcHeartbeatAsync()
+    {
+        if (_heartbeatService == null) throw new InvalidOperationException("Heartbeat service is unavailable.");
+        if (_heartbeatService.IsRunning) return Task.CompletedTask;
+        if (!_plcService.IsConnected) throw new InvalidOperationException("Connect PLC before heartbeat.");
+        if (string.IsNullOrWhiteSpace(PlcHeartbeatAddress))
+            throw new InvalidOperationException("Configure a dedicated heartbeat test address in plc.json.");
+        _heartbeatService.Start(manual: true);
+        PlcHeartbeatStatus = "STARTED · đang chờ ghi và đọc lại";
+        AppendLog($"Heartbeat test started on {PlcHeartbeatAddress}; no camera cycle is started.");
+        return Task.CompletedTask;
+    }
+
+    private async Task StopPlcHeartbeatAsync()
+    {
+        if (_heartbeatService != null) await _heartbeatService.StopAsync();
+        PlcHeartbeatFlag = false;
+        PlcHeartbeatStatus = "STOPPED";
+        await RefreshPlcDebugAsync();
+        AppendLog("Heartbeat test stopped; test bit reset to 0.");
     }
 
     private async Task PingPlcAsync()
@@ -1104,20 +1245,68 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         await ExecuteInspectionCycleAsync();
     }
 
-    private void StartAutoInspection()
+    private void EnsureInspectionReady()
     {
-        IsAutoRunning = true;
-        OperationMode = OperationMode.Auto;
-        _triggerMonitor?.StartMonitoring();
-        _heartbeatService?.Start();
-        AppendLog("🚀 AUTO INSPECTION MODE started. Waiting for PLC triggers...");
+        if (!_cameraService.IsConnected)
+            throw new InvalidOperationException("Connect the camera before inspection.");
+        if (_cameraService.IsLiveActive)
+            throw new InvalidOperationException("Stop LIVE before PLC-triggered inspection.");
+        if (!_lightController.IsConnected)
+            throw new InvalidOperationException("Connect the light controller before inspection.");
+        if (InspectionResultMode == "OCR" && !_ocrService.IsReady)
+            throw new InvalidOperationException("Initialize OCR or select TEST OK / TEST NG.");
     }
 
-    private void StopAutoInspection()
+    private async Task StartAutoInspectionAsync()
+    {
+        if (IsAutoRunning) return;
+        if (_cycleLock.CurrentCount == 0)
+            throw new InvalidOperationException("Wait for the active inspection cycle before starting AUTO.");
+        EnsureInspectionReady();
+        if (!_plcService.IsConnected || _handshakeService == null || _triggerMonitor == null)
+            throw new InvalidOperationException("Connect the PLC before AUTO.");
+        if (_configService.Plc.RequiresReadySignal && string.IsNullOrWhiteSpace(_configService.Plc.Addresses.Ready))
+            throw new InvalidOperationException("Confirm and configure Vision Ready before AUTO. READ PLC and START HEARTBEAT are available for communication tests.");
+
+        var trigger = _configService.Plc.Addresses.Trigger;
+        if (string.IsNullOrWhiteSpace(trigger) || trigger.Contains("NEEDS_", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Configure the PLC Trigger address before AUTO.");
+        if (await _handshakeService.ReadTriggerAsync())
+            throw new InvalidOperationException("Trigger is already ON. Return it to 0 before AUTO.");
+
+        await _handshakeService.SetReadyAsync(false);
+        await _handshakeService.ClearResultFlagsAsync();
+        await _handshakeService.SetBusyAsync(false);
+        await _handshakeService.SetErrorAsync(false);
+        IsAutoRunning = true;
+        OperationMode = OperationMode.Auto;
+        _triggerMonitor.StartMonitoring();
+        _heartbeatService?.Start();
+        try
+        {
+            await _handshakeService.SetReadyAsync(true);
+            PlcReadyFlag = true;
+        }
+        catch
+        {
+            await StopAutoInspectionAsync();
+            throw;
+        }
+        AppendLog($"AUTO started: Trigger={trigger}; result mode={InspectionResultMode}. Waiting for 0->1.");
+    }
+
+    private async Task StopAutoInspectionAsync()
     {
         IsAutoRunning = false;
         OperationMode = OperationMode.Manual;
-        AppendLog("⏹ AUTO INSPECTION MODE stopped. Switched to Manual mode.");
+        if (_triggerMonitor != null) await _triggerMonitor.StopMonitoringAsync();
+        if (_heartbeatService != null) await _heartbeatService.StopAsync();
+        PlcHeartbeatFlag = false;
+        PlcHeartbeatStatus = "STOPPED";
+        if (_handshakeService != null && _plcService.IsConnected)
+            await _handshakeService.SetReadyAsync(false);
+        PlcReadyFlag = false;
+        AppendLog("AUTO stopped. No new PLC triggers will be accepted; an active cycle finishes.");
     }
 
     // ── Inspection Cycle (PLC Handshake Orchestration) ────────────────
@@ -1131,13 +1320,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        bool wasAutoCycle = IsAutoRunning;
+        bool lightsNeedCleanup = false;
+        string resultMode = InspectionResultMode;
+        var plcConfig = _configService.Plc;
+        bool completeAfterResult = plcConfig.CaptureCompleteAfterResult || plcConfig.UsesVerdictWord;
         try
         {
-            AppendLog("═════════ START INSPECTION CYCLE ═════════");
+            EnsureInspectionReady();
+            AppendLog($"═════════ START INSPECTION CYCLE ({resultMode}) ═════════");
 
             // 1. Handshake: Clear old results, assert BUSY
             if (_handshakeService != null)
             {
+                await _handshakeService.SetReadyAsync(false, cancellationToken);
+                PlcReadyFlag = false;
                 await _handshakeService.ClearResultFlagsAsync(cancellationToken);
                 PlcOkFlag = false;
                 PlcNgFlag = false;
@@ -1154,8 +1351,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             {
                 foreach (var ch in LightChannels)
                 {
-                    if (ch.Intensity > 0)
+                    if (ch.UseForInspection && ch.Intensity > 0)
                     {
+                        lightsNeedCleanup = true;
+                        await _lightController.SetChannelAsync(ch.Channel, ch.Intensity, cancellationToken);
                         await _lightController.TurnOnAsync(ch.Channel, cancellationToken);
                         ch.IsOn = true;
                     }
@@ -1169,8 +1368,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             var frame = await _cameraService.CaptureAsync(cancellationToken);
             UpdateCameraImage(frame);
 
-            // 4. Capture Complete (PLC can advance conveyor)
-            if (_handshakeService != null)
+            // Some PLCs need an early capture signal; verdict-word ladders need final completion.
+            if (_handshakeService != null && !completeAfterResult)
             {
                 await _handshakeService.SetCaptureCompleteAsync(true, cancellationToken);
                 PlcCaptureCompleteFlag = true;
@@ -1181,12 +1380,23 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             {
                 await _lightController.TurnOffAllAsync(cancellationToken);
                 foreach (var ch in LightChannels) ch.IsOn = false;
+                lightsNeedCleanup = false;
             }
 
             // 5. OCR Processing
             MachineState = MachineState.Processing;
-            AppendLog($"🔍 OCR: Processing image ({frame.Width}x{frame.Height})...");
-            var ocrResult = await _ocrService.ProcessAsync(frame, cancellationToken);
+            OcrResult ocrResult;
+            if (resultMode is "TEST OK" or "TEST NG")
+            {
+                bool testOk = resultMode == "TEST OK";
+                ocrResult = new OcrResult { Success = testOk, Text = resultMode, Confidence = 0 };
+                AppendLog($"TEST verdict {resultMode}: capture was performed; image quality was not evaluated.");
+            }
+            else
+            {
+                AppendLog($"OCR: Processing image ({frame.Width}x{frame.Height})...");
+                ocrResult = await _ocrService.ProcessAsync(frame, cancellationToken);
+            }
 
             OcrResultText = ocrResult.Text;
             bool isOk = ocrResult.Success && !string.IsNullOrWhiteSpace(ocrResult.Text);
@@ -1218,13 +1428,49 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                     await _handshakeService.WriteOcrResultAsync(ocrResult.Text ?? string.Empty, cancellationToken);
                 }
 
-                await Task.Delay(100, cancellationToken); // Result hold time
+                _lastPlcResultSent = $"{(isOk ? "OK" : "NG")} · {(plcConfig.UsesVerdictWord ? (isOk ? "1" : "2") : "TEXT")} · {DateTime.Now:HH:mm:ss.fff}";
+                if (completeAfterResult)
+                {
+                    await _handshakeService.SetCaptureCompleteAsync(true, cancellationToken);
+                    PlcCaptureCompleteFlag = true;
+                }
+
+                if (wasAutoCycle && plcConfig.WaitForTriggerResetAfterResult)
+                {
+                    var acknowledgement = System.Diagnostics.Stopwatch.StartNew();
+                    while (await _handshakeService.ReadTriggerAsync(cancellationToken))
+                    {
+                        if (acknowledgement.ElapsedMilliseconds >= Math.Max(1, plcConfig.TriggerResetTimeoutMs))
+                            throw new TimeoutException("PLC did not lower Trigger after Vision completion.");
+                        await Task.Delay(20, cancellationToken);
+                    }
+                    if (plcConfig.UsesVerdictWord)
+                    {
+                        // The PLC has consumed the verdict. Remove completion before clearing its word.
+                        await _handshakeService.ClearResultFlagsAsync(cancellationToken);
+                        PlcOkFlag = false;
+                        PlcNgFlag = false;
+                    }
+                    else
+                    {
+                        await _handshakeService.SetCaptureCompleteAsync(false, cancellationToken);
+                    }
+                    PlcCaptureCompleteFlag = false;
+                    AppendLog(plcConfig.UsesVerdictWord
+                        ? "PLC acknowledged result: Trigger=0; Vision completion cleared; Result=0."
+                        : "PLC acknowledged result: Trigger=0; Vision completion cleared.");
+                }
+                else
+                {
+                    await Task.Delay(100, cancellationToken);
+                }
 
                 // 7. Finish Handshake: Clear BUSY, assert READY
                 await _handshakeService.SetBusyAsync(false, cancellationToken);
                 PlcBusyFlag = false;
-                await _handshakeService.SetReadyAsync(true, cancellationToken);
-                PlcReadyFlag = true;
+                bool ready = !wasAutoCycle || IsAutoRunning;
+                await _handshakeService.SetReadyAsync(ready, cancellationToken);
+                PlcReadyFlag = ready;
             }
 
             sw.Stop();
@@ -1243,6 +1489,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
+                    await _handshakeService.SetCaptureCompleteAsync(false, CancellationToken.None);
+                    PlcCaptureCompleteFlag = false;
+                    await _handshakeService.SetReadyAsync(false, CancellationToken.None);
+                    PlcReadyFlag = false;
                     await _handshakeService.SetErrorAsync(true, CancellationToken.None);
                     PlcErrorFlag = true;
                     await _handshakeService.SetBusyAsync(false, CancellationToken.None);
@@ -1253,6 +1503,19 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
         finally
         {
+            if (lightsNeedCleanup && _lightController.IsConnected)
+            {
+                try
+                {
+                    await _lightController.TurnOffAllAsync(CancellationToken.None);
+                    foreach (var ch in LightChannels) ch.IsOn = false;
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"Light cleanup failed: {ex.Message}");
+                    _logger.LogError(ex, "Failed to turn off inspection lights.");
+                }
+            }
             _cycleLock.Release();
         }
     }
@@ -1328,16 +1591,19 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             if (System.IO.File.Exists(configPath))
             {
                 var json = await System.IO.File.ReadAllTextAsync(configPath);
-                var updatedJson = System.Text.RegularExpressions.Regex.Replace(
-                    json,
-                    @"""IpAddress""\s*:\s*""[^""]*""",
-                    $"\"IpAddress\": \"{LightIpAddress.Trim()}\"");
-                updatedJson = System.Text.RegularExpressions.Regex.Replace(
-                    updatedJson,
-                    @"""Port""\s*:\s*\d+",
-                    $"\"Port\": {LightPort}");
-
-                await System.IO.File.WriteAllTextAsync(configPath, updatedJson);
+                var document = System.Text.Json.Nodes.JsonNode.Parse(json)
+                    ?? throw new InvalidOperationException("Invalid light.json.");
+                var lightConfig = document["Light"]
+                    ?? throw new InvalidOperationException("Missing Light section.");
+                _configService.Light.Channels = LightChannels.Select(ch => new LightChannelConfiguration
+                {
+                    Channel = ch.Channel, Name = ch.Name, Intensity = ch.Intensity, Enabled = ch.UseForInspection
+                }).ToList();
+                lightConfig["IpAddress"] = LightIpAddress.Trim();
+                lightConfig["Port"] = LightPort;
+                lightConfig["Channels"] = System.Text.Json.JsonSerializer.SerializeToNode(_configService.Light.Channels);
+                await System.IO.File.WriteAllTextAsync(configPath,
+                    document.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
                 AppendLog($"💾 Saved light settings (IP: {LightIpAddress.Trim()}, Port: {LightPort}) to light.json");
             }
             else
@@ -1381,7 +1647,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         for (int i = 1; i <= 8; i++)
         {
             var chConfig = cfgChannels.Find(c => c.Channel == i);
-            int initialIntensity = chConfig?.Intensity > 0 ? chConfig.Intensity : defaultIntensity;
+            int initialIntensity = chConfig != null ? chConfig.Intensity : defaultIntensity;
             string name = !string.IsNullOrWhiteSpace(chConfig?.Name) ? chConfig.Name : $"CH{i}";
 
             var chVm = new LightChannelViewModel(
@@ -1390,7 +1656,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 initialIntensity,
                 _lightController,
                 AppendLog,
-                _logger);
+                _logger)
+            {
+                UseForInspection = chConfig?.Enabled ?? true
+            };
 
             LightChannels.Add(chVm);
         }
@@ -1793,6 +2062,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private async Task ResetAsync()
     {
+        if (_cycleLock.CurrentCount == 0)
+        {
+            AppendLog("Wait for the active inspection cycle before RESET.");
+            return;
+        }
         MachineState = MachineState.Ready;
         OcrResultText = string.Empty;
         InspectionResultText = string.Empty;
@@ -1828,11 +2102,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private void OnFrameReceived(object? sender, ImageFrame frame)
     {
-        // Must update UI on dispatcher thread
-        Application.Current?.Dispatcher.BeginInvoke(() =>
-        {
+        if (Volatile.Read(ref _acceptPreviewFrames) != 0)
+            Interlocked.Exchange(ref _pendingPreviewFrame, frame);
+    }
+
+    private void RenderLatestPreview(object? sender, EventArgs e)
+    {
+        var frame = Interlocked.Exchange(ref _pendingPreviewFrame, null);
+        if (frame != null && Volatile.Read(ref _acceptPreviewFrames) != 0 && _cameraService.IsLiveActive)
             UpdateCameraImage(frame);
-        });
     }
 
     private void UpdateCameraImage(ImageFrame frame)
@@ -1890,6 +2168,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        Volatile.Write(ref _acceptPreviewFrames, 0);
+        _previewTimer.Stop();
+        _plcDebugTimer.Stop();
+        _plcDebugTimer.Tick -= OnPlcDebugTimerTick;
+        _plcDebugCts.Cancel();
+        _previewTimer.Tick -= RenderLatestPreview;
+        Interlocked.Exchange(ref _pendingPreviewFrame, null);
         StopContinuousLoop();
         _continuousLoopCts?.Dispose();
         _cameraService.FrameReceived -= OnFrameReceived;

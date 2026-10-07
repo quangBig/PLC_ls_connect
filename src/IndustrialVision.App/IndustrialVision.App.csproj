@@ -24,7 +24,6 @@
     <ProjectReference Include="..\IndustrialVision.Plc\IndustrialVision.Plc.csproj" />
     <ProjectReference Include="..\IndustrialVision.Light\IndustrialVision.Light.csproj" />
     <ProjectReference Include="..\IndustrialVision.Ocr\IndustrialVision.Ocr.csproj" />
-    <ProjectReference Include="..\IndustrialVision.Workflow\IndustrialVision.Workflow.csproj" />
   </ItemGroup>
 
   <ItemGroup>

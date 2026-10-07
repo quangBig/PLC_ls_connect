@@ -1,10 +1,10 @@
 {
   "_comment": "Basler pylon camera. Discover and select a GigE/USB3 camera in the UI; identity may also be configured below.",
   "Camera": {
-    "Name": "",
-    "SerialNumber": "",
-    "IpAddress": "",
-    "ConnectionType": "",
+    "Name": "Basler acA1600-20gc (21826169)",
+    "SerialNumber": "21826169",
+    "IpAddress": "192.168.2.25",
+    "ConnectionType": "GigE",
     "Exposure": 10000,
     "Gain": 0,
     "TriggerMode": "On",

@@ -253,6 +253,10 @@ public sealed class PlcService : IPlcService
                     throw new PlcException($"[PLC_TIMEOUT] Operation {operationName} on '{address}' timed out.");
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw; // Stopping a monitor is not a PLC communication fault.
+            }
             catch (Exception ex) when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
             {
                 _logger.LogWarning(ex, "[PLC_RETRY] {Op}({Address}) failed (Attempt {Attempt}/{Max}): {Message}. Retrying...",

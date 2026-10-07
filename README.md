@@ -1,40 +1,62 @@
-# Industrial Vision System - Camera Basler, Light Controller & PLC LS
+# IndustrialVision — Basler Camera, Rsee Light và PLC LS
 
-Hệ thống điều khiển thị giác công nghiệp (C# .NET 8 WPF MVVM) tích hợp:
-- **Basler Camera** (GigE / USB3 qua pylon .NET SDK)
-- **Rsee Light Controller** (PW-D-24W20-8TE qua Ethernet LAN)
-- **LS PLC** (XGB Series - XBM-DN32HP qua FEnet / XGT Dedicated TCP)
-- **Module OCR / AI**
+Ứng dụng C# .NET 8 WPF x64 điều khiển camera, đèn và giao tiếp PLC LS.
 
-## Cấu trúc Solution
-- `IndustrialVision.Core`: Interfaces, Models, Configurations, Enums, Exceptions.
-- `IndustrialVision.Infrastructure`: Configuration Loader & Validation, Logging.
-- `IndustrialVision.Camera`: Basler pylon Camera Service & Mock.
-- `IndustrialVision.Light`: Rsee Light Controller driver (ASCII protocol qua LAN) & Mock.
-- `IndustrialVision.Plc`: LS XGT Dedicated protocol driver, Handshake & Trigger monitor.
-- `IndustrialVision.Ocr`: OCR integration layer & Mock.
-- `IndustrialVision.Workflow`: Machine State Machine & Cycle orchestration.
-- `IndustrialVision.App`: WPF MVVM HMI Application.
-- `tools/XgtSelfCheck`: Tool kiểm tra khung truyền giao thức XGT Dedicated.
+## Tài liệu luồng code
 
-## Yêu cầu môi trường
-- .NET 8.0 SDK
-- Windows 10/11 x64
-- Project dùng NuGet [Basler.Pylon.NET8.x64 11.2.1.755](https://www.nuget.org/packages/Basler.Pylon.NET8.x64/11.2.1.755); `dotnet build` / `dotnet run` tự restore thư viện .NET x64.
-- Máy chạy camera thật cần cài **Basler pylon 11 Runtime x64**, kèm driver GigE hoặc USB3 theo camera. **pylon Software Suite 25.10 / 25.11** cung cấp native SDK 11.2.x tương thích với NuGet trên; xem [release notes 25.10](https://docs.baslerweb.com/pylon-software-suite-25-10-release-notes) và [25.11](https://docs.baslerweb.com/pylon-software-suite-25-11-release-notes). NuGet chỉ cung cấp thư viện để build; không thay thế runtime và driver. Không thay bằng runtime pylon 12 khi vẫn dùng binding này. Xem [hướng dẫn cài pylon cho Windows](https://docs.baslerweb.com/software-installation-%28windows%29).
-- Nếu triển khai bằng cách copy DLL, lấy các native DLL từ `<thư mục cài pylon>\Runtime\x64` của phiên bản tương thích và đặt cạnh file chạy; vẫn cần cài driver camera. Danh sách DLL phụ thuộc giao tiếp: [pylon Deployment Guide](https://docs.baslerweb.com/pylonapi/pylon-deployment-guide). Không dùng DLL x86 hoặc trộn DLL từ các phiên bản khác nhau.
+Đọc [Luồng code từng thiết bị và truyền thông PLC](docs/LUONG_CODE_THIET_BI_VA_PLC.md).
+Tài liệu đối chiếu source ngày 07/10/2026, có bảng địa chỉ, sơ đồ, thứ tự handshake,
+tên hàm và liên kết đến dòng code cho camera, lens, đèn, PLC và OCR.
 
-## Chạy ứng dụng
+## Build và chạy
+
+Yêu cầu Windows x64, .NET 8 SDK; camera thật cần Basler pylon runtime 11 x64 và driver
+GigE/USB3 phù hợp với binding Basler.Pylon.NET8.x64 11.2.1.755 trong project Camera.
+LIVE nhận ảnh liên tục cũng sử dụng SDK/runtime này. Ứng dụng dùng đường dẫn DLL
+trong môi trường Windows sau khi cài pylon và không tự sửa PATH. Máy người dùng đã
+có runtime x64 và đường dẫn tương ứng trong PATH; khi chạy trên máy khác cần bảo
+đảm các thành phần này được cài đúng.
+
+Từ thư mục PLC_ls_connect:
+
 ```powershell
-dotnet run --project src/IndustrialVision.App
+dotnet build IndustrialVision.sln -c Release -m:1 -nr:false
+dotnet run --project src/IndustrialVision.App -c Release
 ```
 
-## Kết nối camera
-- `Config/appsettings.json`: đặt `System.SimulationMode = false` để dùng camera Basler thật; `true` dùng camera giả lập.
-- Kiểm tra camera trong **pylon Viewer**, đóng kết nối camera trong Viewer, rồi mở tab **CAMERA (BASLER)** → **DISCOVER** → chọn camera theo model/serial/IP → **CONNECT**.
-- **LIVE** xem liên tục, **STOP LIVE** khôi phục trigger trong `camera.json`, **CAPTURE** chụp một ảnh (Software trigger mặc định). Chụp kiểm tra sẽ dừng Live để luồng xem trước không lấy mất ảnh trigger.
-- Sửa **Exposure (µs)** / **Gain** rồi nhấn **APPLY**; **SAVE SETTINGS** lưu serial/IP và thông số vào `Config/camera.json` cạnh file chạy. Gain dùng đơn vị của tham số camera: `Gain` / `GainAbs` thường là dB; model cũ chỉ hỗ trợ `GainRaw` dùng giá trị raw nguyên theo camera, không tự quy đổi từ dB.
-- Khi kết nối model cũ dùng `GainRaw`, giá trị Gain mặc định 0 được đổi thành mức raw nhỏ nhất của camera và cập nhật lại trên giao diện.
-- `camera.json` hỗ trợ `TriggerMode` (`On`/`Off`), `TriggerSource` (`Software` hoặc line do camera hỗ trợ), `PixelFormat`, `Width`, `Height`, `FrameRate`, `TimeoutMs`. Để trống `PixelFormat` và đặt kích thước/frame rate bằng 0 để dùng mặc định của camera.
-- Có thể cấu hình serial/IP trước khi chạy. Khi có nhiều camera mà chưa chọn thiết bị, dịch vụ yêu cầu chọn camera để tránh kết nối nhầm.
-- Nếu không dò thấy camera: kiểm tra pylon runtime/driver, nguồn và cáp; camera GigE cần cùng subnet với card mạng máy tính. Nếu báo thiếu DLL hoặc không tải được SDK, kiểm tra runtime pylon x64 tương thích và đường dẫn native DLL theo hướng dẫn triển khai ở trên.
+Đóng desktop cũ trước khi build vào cùng output để tránh file bị khóa.
+Ứng dụng đọc Config cạnh file chạy. SAVE SETTINGS trong UI ghi vào bản Config đó;
+cấu hình source và cấu hình cạnh exe có thể khác nhau.
+
+## Luồng đang có
+
+PLC Trigger 0→1 → bật kênh đèn đã chọn → chụp → tắt đèn → lấy OK/NG → ghi Result →
+Complete=1 → chờ PLC hạ Trigger → Complete=0 → Result=0.
+
+| Tín hiệu | XG5000 | Địa chỉ XGT | Hướng |
+|---|---|---|---|
+| Trigger | D01040.0 | %DX16640 | C# đọc từ PLC |
+| Complete | D02040.2 | %DX32642 | C# ghi về PLC |
+| Result: 0=trống, 1=OK, 2=NG | D02050 | %DW2050 | C# ghi về PLC |
+| Heartbeat riêng | M0030F | %MX495 | C# ghi và đọc lại |
+
+## Trạng thái tích hợp
+
+- Camera và PLC dùng driver thật khi SimulationMode=false; đèn Rsee dùng driver thật
+  ở cả hai chế độ SimulationMode.
+- `MockCameraService` chỉ tạo ảnh giả khi SimulationMode=true. Cấu hình hiện là false,
+  nên LIVE/CAPTURE sử dụng `BaslerCameraService`. Driver thật có các phần quét thiết
+  bị, mở kết nối, cài tham số, nhận LIVE, chụp một ảnh, đổi dữ liệu ảnh và giải phóng
+  tài nguyên; xem mục 3.4 và 5 trong tài liệu luồng code để đọc từng phần.
+- OCR hiện vẫn giả lập. TEST OK/NG kiểm tra chu trình/handshake bằng verdict đặt trước.
+- AUTO hiện cần xác nhận/map Vision Ready: Addresses.Ready đang trống trong khi
+  RequiresReadySignal=true. Cần xác nhận vai trò D02040.0 và điều kiện M01000 ở PLC.
+- Thiết bị đèn người dùng đang dùng là 192.168.110.10:9000; source light.json còn
+  192.168.1.100:5000. Kiểm tra cấu hình cạnh exe hoặc nhập/lưu IP/port đúng trên UI.
+- Bộ test, tool CLI, bản build thử và khung Workflow chưa dùng đã được bỏ theo yêu cầu.
+  Kiểm tra giao tiếp tay/heartbeat vẫn có trong tab PLC của ứng dụng.
+
+Solution giữ 7 project: App, Core, Infrastructure, Camera, Light, Plc và Ocr.
+Luồng điều phối thực tế nằm trong MainViewModel.ExecuteInspectionCycleAsync.
+
+Sau khi dọn, solution đã được build Release thành công: **0 warnings, 0 errors**.
