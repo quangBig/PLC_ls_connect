@@ -47,7 +47,39 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ConnectionStatus CameraStatus
     {
         get => _cameraStatus;
-        set => SetProperty(ref _cameraStatus, value);
+        set
+        {
+            if (SetProperty(ref _cameraStatus, value))
+                OnPropertyChanged(nameof(CanSelectCamera));
+        }
+    }
+
+    public ObservableCollection<CameraDeviceInfo> AvailableCameras { get; } = new();
+    private CameraDeviceInfo? _selectedCamera;
+    public CameraDeviceInfo? SelectedCamera
+    {
+        get => _selectedCamera;
+        set => SetProperty(ref _selectedCamera, value);
+    }
+
+    public bool CanSelectCamera => CameraStatus is ConnectionStatus.Disconnected or ConnectionStatus.Error;
+    private double _cameraExposure;
+    public double CameraExposure
+    {
+        get => _cameraExposure;
+        set => SetProperty(ref _cameraExposure, value);
+    }
+    private double _cameraGain;
+    public double CameraGain
+    {
+        get => _cameraGain;
+        set => SetProperty(ref _cameraGain, value);
+    }
+    private string _cameraMessage = "Discover and select a camera, then connect.";
+    public string CameraMessage
+    {
+        get => _cameraMessage;
+        private set => SetProperty(ref _cameraMessage, value);
     }
 
     private ConnectionStatus _lightStatus = ConnectionStatus.Disconnected;
@@ -435,6 +467,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ICommand ConnectAllCommand { get; }
     public ICommand DisconnectAllCommand { get; }
     public ICommand ConnectCameraCommand { get; }
+    public ICommand DiscoverCamerasCommand { get; }
+    public ICommand ApplyCameraParametersCommand { get; }
+    public ICommand SaveCameraSettingsCommand { get; }
     public ICommand DisconnectCameraCommand { get; }
     public ICommand StartLiveCommand { get; }
     public ICommand StopLiveCommand { get; }
@@ -492,6 +527,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // Read config
         ApplicationTitle = _configService.System.ApplicationTitle;
         IsSimulationMode = _configService.System.SimulationMode;
+        CameraExposure = _configService.Camera.Exposure;
+        CameraGain = _configService.Camera.Gain;
         LightIpAddress = !string.IsNullOrWhiteSpace(_configService.Light.IpAddress)
             ? _configService.Light.IpAddress
             : "192.168.1.100";
@@ -507,7 +544,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         // Wire up status change events
         _cameraService.StatusChanged += (_, status) =>
-            Application.Current?.Dispatcher.Invoke(() => CameraStatus = status);
+            Application.Current?.Dispatcher.BeginInvoke(() => CameraStatus = status);
         _plcService.StatusChanged += (_, status) =>
             Application.Current?.Dispatcher.Invoke(() => PlcStatus = status);
         _lightController.StatusChanged += (_, status) =>
@@ -552,6 +589,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ConnectAllCommand = new AsyncRelayCommand(ConnectAllAsync);
         DisconnectAllCommand = new AsyncRelayCommand(DisconnectAllAsync);
         ConnectCameraCommand = new AsyncRelayCommand(ConnectCameraAsync);
+        DiscoverCamerasCommand = new AsyncRelayCommand(DiscoverCamerasAsync);
+        ApplyCameraParametersCommand = new AsyncRelayCommand(ApplyCameraParametersAsync);
+        SaveCameraSettingsCommand = new AsyncRelayCommand(SaveCameraSettingsAsync);
         DisconnectCameraCommand = new AsyncRelayCommand(DisconnectCameraAsync);
         StartLiveCommand = new AsyncRelayCommand(StartLiveAsync);
         StopLiveCommand = new AsyncRelayCommand(StopLiveAsync);
@@ -649,16 +689,76 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private async Task DiscoverCamerasAsync()
+    {
+        try
+        {
+            var devices = await _cameraService.DiscoverCamerasAsync();
+            string serial = SelectedCamera?.SerialNumber ?? _configService.Camera.SerialNumber;
+            AvailableCameras.Clear();
+            foreach (var device in devices) AvailableCameras.Add(device);
+            SelectedCamera = AvailableCameras.FirstOrDefault(c => c.SerialNumber == serial)
+                ?? AvailableCameras.FirstOrDefault(c => !string.IsNullOrWhiteSpace(_configService.Camera.IpAddress) && c.IpAddress == _configService.Camera.IpAddress)
+                ?? AvailableCameras.FirstOrDefault();
+            CameraMessage = devices.Count > 0 ? $"Found {devices.Count} camera(s)." : "No Hikrobot cameras found. Check MVS, cable and network subnet.";
+            AppendLog(CameraMessage);
+        }
+        catch (Exception ex)
+        {
+            CameraMessage = $"Camera discovery failed: {ex.Message}";
+            AppendLog(CameraMessage);
+            _logger.LogError(ex, "Camera discovery failed.");
+        }
+    }
+
+    private void UpdateCameraConfiguration()
+    {
+        if (!double.IsFinite(CameraExposure) || CameraExposure <= 0 || !double.IsFinite(CameraGain) || CameraGain < 0)
+            throw new InvalidOperationException("Exposure must be positive and Gain must be non-negative.");
+        if (!_cameraService.IsConnected && SelectedCamera != null)
+        {
+            _configService.Camera.Name = SelectedCamera.Name;
+            _configService.Camera.SerialNumber = SelectedCamera.SerialNumber;
+            _configService.Camera.IpAddress = SelectedCamera.IpAddress;
+            _configService.Camera.ConnectionType = SelectedCamera.InterfaceType;
+        }
+        _configService.Camera.Exposure = CameraExposure;
+        _configService.Camera.Gain = CameraGain;
+    }
+
+    private async Task ApplyCameraParametersAsync()
+    {
+        if (!_cameraService.IsConnected) throw new InvalidOperationException("Connect the camera before applying parameters.");
+        await _cameraService.SetExposureAsync(CameraExposure);
+        await _cameraService.SetGainAsync(CameraGain);
+        CameraMessage = $"Applied Exposure={CameraExposure:F0} µs, Gain={CameraGain:F1} dB.";
+        AppendLog(CameraMessage);
+    }
+
+    private async Task SaveCameraSettingsAsync()
+    {
+        UpdateCameraConfiguration();
+        var configPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Config", "camera.json");
+        var json = System.Text.Json.JsonSerializer.Serialize(new { Camera = _configService.Camera },
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        await System.IO.File.WriteAllTextAsync(configPath, json);
+        CameraMessage = "Saved camera settings to Config/camera.json.";
+        AppendLog(CameraMessage);
+    }
+
     private async Task ConnectCameraAsync()
     {
         try
         {
             AppendLog("Camera connecting...");
+            UpdateCameraConfiguration();
             await _cameraService.ConnectAsync();
+            CameraMessage = $"Connected: {_configService.Camera.SerialNumber} {_configService.Camera.IpAddress}";
             AppendLog("Camera connected.");
         }
         catch (Exception ex)
         {
+            CameraMessage = $"Connection failed: {ex.Message}";
             AppendLog($"❌ Camera connection failed: {ex.Message}");
             _logger.LogError(ex, "Camera connection failed.");
             throw;
@@ -673,6 +773,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 await _cameraService.StopLiveAsync();
             await _cameraService.DisconnectAsync();
             CameraImage = null;
+            CameraMessage = "Camera disconnected.";
             AppendLog("Camera disconnected.");
         }
         catch (Exception ex)
@@ -688,6 +789,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             AppendLog("Starting live preview...");
             await _cameraService.StartLiveAsync();
+            CameraMessage = "Live preview active (continuous acquisition).";
             AppendLog("Live preview started.");
         }
         catch (Exception ex)
@@ -702,6 +804,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         try
         {
             await _cameraService.StopLiveAsync();
+            CameraMessage = "Live preview stopped; configured trigger restored.";
             AppendLog("Live preview stopped.");
         }
         catch (Exception ex)
@@ -718,6 +821,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             AppendLog("Capturing image...");
             var frame = await _cameraService.CaptureAsync();
             UpdateCameraImage(frame);
+            CameraMessage = $"Captured {frame.Width}x{frame.Height}.";
             AppendLog($"Image captured: {frame.Width}x{frame.Height}");
         }
         catch (Exception ex)

@@ -16,4 +16,11 @@
     <ProjectReference Include="..\IndustrialVision.Core\IndustrialVision.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Reference Include="MvCameraControl.Net">
+      <HintPath>Libs\MvCameraControl.Net.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
 </Project>

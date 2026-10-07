@@ -79,13 +79,23 @@ public sealed class ConfigurationValidator
 
         if (string.IsNullOrWhiteSpace(cam.SerialNumber) && string.IsNullOrWhiteSpace(cam.IpAddress))
         {
-            errors.Add("Camera.SerialNumber and Camera.IpAddress are both empty. At least one is required to connect.");
+            errors.Add("Camera identity is not saved yet. Use CAMERA > DISCOVER and select a camera before connecting when multiple devices are present.");
         }
 
-        if (string.IsNullOrWhiteSpace(cam.ConnectionType))
+        if (!string.IsNullOrWhiteSpace(cam.ConnectionType) &&
+            !cam.ConnectionType.Equals("GigE", StringComparison.OrdinalIgnoreCase) &&
+            !cam.ConnectionType.Equals("USB3", StringComparison.OrdinalIgnoreCase))
         {
-            errors.Add("Camera.ConnectionType is not configured (e.g. 'GigE' or 'USB3').");
+            errors.Add("Camera.ConnectionType must be GigE, USB3 or empty for automatic discovery.");
         }
+        if (!double.IsFinite(cam.Exposure) || cam.Exposure <= 0)
+            errors.Add("Camera.Exposure must be positive (microseconds).");
+        if (!double.IsFinite(cam.Gain) || cam.Gain < 0)
+            errors.Add("Camera.Gain must be non-negative.");
+        if (cam.TriggerMode is not ("On" or "Off"))
+            errors.Add("Camera.TriggerMode must be On or Off.");
+        if (cam.TriggerMode == "On" && string.IsNullOrWhiteSpace(cam.TriggerSource))
+            errors.Add("Camera.TriggerSource is required when trigger mode is On.");
     }
 
     private void ValidatePlc(List<string> errors)

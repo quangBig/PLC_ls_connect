@@ -11,7 +11,7 @@ namespace IndustrialVision.Camera;
 /// Generates synthetic images for testing workflow without real hardware.
 /// 
 /// This is NOT a real camera implementation.
-/// Real Basler implementation will be added in Phase 2.
+/// Real hardware uses HikrobotCameraService.
 /// </summary>
 public sealed class MockCameraService : ICameraService
 {
