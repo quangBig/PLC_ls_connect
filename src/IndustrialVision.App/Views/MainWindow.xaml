@@ -220,10 +220,10 @@
 
                 <!-- ── Bottom TabControl: Light Controller + PLC LS Manual Test ── -->
                 <TabControl Grid.Row="1" Margin="0,4,0,0">
-                    <TabItem Header="📷 CAMERA (HIKROBOT)">
+                    <TabItem Header="📷 CAMERA (BASLER)">
                         <Border Background="#181825" Padding="14,10" BorderBrush="#313244" BorderThickness="1">
                             <StackPanel>
-                                <TextBlock Text="HIKROBOT CAMERA — GigE / USB3" Foreground="#CDD6F4" FontWeight="Bold" Margin="0,0,0,8" />
+                                <TextBlock Text="BASLER CAMERA — GigE / USB3" Foreground="#CDD6F4" FontWeight="Bold" Margin="0,0,0,8" />
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -244,7 +244,7 @@
                                 <WrapPanel Margin="0,10,0,0">
                                     <TextBlock Text="Exposure (µs):" Foreground="#A6ADC8" VerticalAlignment="Center" Margin="0,0,6,0" />
                                     <TextBox Text="{Binding CameraExposure, UpdateSourceTrigger=LostFocus}" Width="90" Padding="5,3" Margin="0,0,12,0" />
-                                    <TextBlock Text="Gain (dB):" Foreground="#A6ADC8" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock Text="Gain:" Foreground="#A6ADC8" VerticalAlignment="Center" Margin="0,0,6,0" />
                                     <TextBox Text="{Binding CameraGain, UpdateSourceTrigger=LostFocus}" Width="65" Padding="5,3" Margin="0,0,8,0" />
                                     <Button Content="APPLY" Command="{Binding ApplyCameraParametersCommand}" Style="{StaticResource HmiButton}" Padding="10,5" Margin="0,0,4,0" />
                                     <Button Content="SAVE SETTINGS" Command="{Binding SaveCameraSettingsCommand}" Style="{StaticResource HmiButton}" Padding="10,5" />

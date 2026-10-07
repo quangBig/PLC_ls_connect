@@ -93,8 +93,8 @@ public static class ServiceRegistration
     /// </summary>
     private static void RegisterRealServices(IServiceCollection services, PlcConfiguration plcConfig)
     {
-        // Same Hikrobot MVS SDK as TestLight_Cam; simulation uses MockCameraService.
-        services.AddSingleton<ICameraService, HikrobotCameraService>();
+        // Basler pylon SDK for real camera hardware; simulation uses MockCameraService.
+        services.AddSingleton<ICameraService, BaslerCameraService>();
 
         // Real Light Controller: Rsee PW-D-24W20-8TE
         services.AddSingleton<ILightController, RseeLightController>();

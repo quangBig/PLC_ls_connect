@@ -700,7 +700,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             SelectedCamera = AvailableCameras.FirstOrDefault(c => c.SerialNumber == serial)
                 ?? AvailableCameras.FirstOrDefault(c => !string.IsNullOrWhiteSpace(_configService.Camera.IpAddress) && c.IpAddress == _configService.Camera.IpAddress)
                 ?? AvailableCameras.FirstOrDefault();
-            CameraMessage = devices.Count > 0 ? $"Found {devices.Count} camera(s)." : "No Hikrobot cameras found. Check MVS, cable and network subnet.";
+            CameraMessage = devices.Count > 0 ? $"Found {devices.Count} camera(s)." : "No Basler cameras found. Check pylon drivers, cable and network subnet.";
             AppendLog(CameraMessage);
         }
         catch (Exception ex)
@@ -731,7 +731,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         if (!_cameraService.IsConnected) throw new InvalidOperationException("Connect the camera before applying parameters.");
         await _cameraService.SetExposureAsync(CameraExposure);
         await _cameraService.SetGainAsync(CameraGain);
-        CameraMessage = $"Applied Exposure={CameraExposure:F0} µs, Gain={CameraGain:F1} dB.";
+        CameraMessage = $"Applied Exposure={CameraExposure:F0} µs, Gain={CameraGain:G}.";
         AppendLog(CameraMessage);
     }
 
@@ -753,6 +753,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             AppendLog("Camera connecting...");
             UpdateCameraConfiguration();
             await _cameraService.ConnectAsync();
+            CameraExposure = _configService.Camera.Exposure;
+            CameraGain = _configService.Camera.Gain;
             CameraMessage = $"Connected: {_configService.Camera.SerialNumber} {_configService.Camera.IpAddress}";
             AppendLog("Camera connected.");
         }

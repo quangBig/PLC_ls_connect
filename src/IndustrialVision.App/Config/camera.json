@@ -1,5 +1,5 @@
 {
-  "_comment": "Hikrobot MVS camera, as in TestLight_Cam. Discover and select a GigE/USB3 camera in the UI; identity may also be configured below.",
+  "_comment": "Basler pylon camera. Discover and select a GigE/USB3 camera in the UI; identity may also be configured below.",
   "Camera": {
     "Name": "",
     "SerialNumber": "",

@@ -5,7 +5,7 @@ namespace IndustrialVision.Core.Interfaces;
 
 /// <summary>
 /// Camera service abstraction.
-/// Only the implementation (e.g. HikrobotCameraService) may depend on vendor SDK.
+/// Only the implementation (e.g. BaslerCameraService) may depend on vendor SDK.
 /// UI and workflow must only use this interface.
 /// </summary>
 public interface ICameraService : IDisposable
